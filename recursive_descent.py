@@ -21,7 +21,7 @@ def rd_disasm(data, start=0, entries=None):
             if op.reg == capstone.arm.ARM_REG_PC:
                 return insn.address + 8
             else:
-                return regs[op.reg]
+                return regs[insn.address][op.reg]
 
         # immediate
         elif op.type == capstone.arm.ARM_OP_IMM:
@@ -34,7 +34,7 @@ def rd_disasm(data, start=0, entries=None):
             if op.mem.base == capstone.arm.ARM_REG_PC:
                 base = insn.address + 8
             else:
-                base = regs[op.reg]
+                base = regs[insn.address][op.reg]
             mem = base + op.mem.disp - start
             if mem + 4 > len(data):
                 raise KeyError
@@ -103,6 +103,11 @@ def rd_disasm(data, start=0, entries=None):
                         new_regs[insn.operands[0].reg] = opval(insn, 1)
                     except KeyError:
                         print '>>> LDR key error <<<'
+                elif insn.id == capstone.arm.ARM_INS_MOV:
+                    try:
+                        new_regs[insn.operands[0].reg] = opval(insn, 1)
+                    except KeyError:
+                        print '>>> MOV key error <<<'
 
                 if new_regs:
                     for entry in new_entries:
