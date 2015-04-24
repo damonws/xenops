@@ -1,4 +1,5 @@
 import capstone
+import binascii
 import itertools
 import reboot
 import struct
@@ -73,7 +74,12 @@ def rd_disasm(data, start=0, entries=None):
 
                 else:
                     new_regs = {}
-                reboot.print_detail(insn)
+
+                print '{:08x}: {:8} {}  {:8}{}'.format(insn.address,
+                                                  binascii.hexlify(insn.bytes),
+                                                  'T' if thumb else 'A',
+                                                  insn.mnemonic, insn.op_str)
+                #reboot.print_detail(insn)
 
                 # analyze semantics of instructions
 
