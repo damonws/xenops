@@ -1,6 +1,11 @@
 import capstone
+import itertools
 import reboot
 import struct
+
+def grouper(iterable, n, fillvalue=None):
+    args = [iter(iterable)] * n
+    return itertools.izip_longest(fillvalue=fillvalue, *args)
 
 def rd_disasm(data, start=0, entries=None):
     if entries is None:
@@ -29,13 +34,14 @@ def rd_disasm(data, start=0, entries=None):
 
         # memory
         elif op.type == capstone.arm.ARM_OP_MEM:
-            if op.mem.index != 0 or op.mem.scale != 1:
-                raise KeyError
-            if op.mem.base == capstone.arm.ARM_REG_PC:
+            if op.mem.base == 0:
+                base = 0
+            elif op.mem.base == capstone.arm.ARM_REG_PC:
                 base = insn.address + 8
             else:
-                base = regs[insn.address][op.reg]
-            mem = base + op.mem.disp - start
+                base = regs[insn.address][op.mem.base]
+            index = 0 if op.mem.index == 0 else regs[insn.address][op.mem.index]
+            mem = base + index * op.mem.scale + op.mem.disp - start
             if mem + 4 > len(data):
                 raise KeyError
             return struct.unpack('<I', data[mem:mem+4])[0]
@@ -62,15 +68,17 @@ def rd_disasm(data, start=0, entries=None):
             if insn:
                 if addr in regs:
                     new_regs = regs[addr]
-                    for reg, value in regs[addr].iteritems():
-                        print '{}={:x}'.format(insn.reg_name(reg), value)
+                    print '\n' + '\n'.join('\t' + ' '.join(g)
+                            for g in grouper(('{}={:08x}'.format(insn.reg_name(r), v)
+                            for r, v in sorted(regs[addr].items())), 4, ''))
+
                 else:
                     new_regs = {}
                 reboot.print_detail(insn)
 
                 # analyze semantics of instructions
-                # - determine possible next instructions
-                # - set register state
+
+                # determine possible next instructions
                 if capstone.CS_GRP_JUMP in insn.groups:
 
                     # add target of jump instructions
@@ -88,27 +96,91 @@ def rd_disasm(data, start=0, entries=None):
                     # add next instruction for everything else
                     new_entries.append(addr + insn.size)
 
-                if insn.id == capstone.arm.ARM_INS_ADD:
+                # determine resulting register state
+
+                # instructions we don't care about (for now)
+                if insn.id in (capstone.arm.ARM_INS_CMP,
+                               capstone.arm.ARM_INS_B,
+                               capstone.arm.ARM_INS_BX,
+                               capstone.arm.ARM_INS_STR,
+                               capstone.arm.ARM_INS_DSB,
+                               capstone.arm.ARM_INS_ISB,
+                               capstone.arm.ARM_INS_MSR,
+                              ):
+                    pass
+
+                # ADD
+                elif insn.id == capstone.arm.ARM_INS_ADD:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1) + opval(insn, 2)
                     except KeyError:
                         print '>>> ADD key error <<<'
+
+                # SUB
                 elif insn.id == capstone.arm.ARM_INS_SUB:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1) - opval(insn, 2)
                     except KeyError:
                         print '>>> SUB key error <<<'
+
+                # LDR
                 elif insn.id == capstone.arm.ARM_INS_LDR:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1)
                     except KeyError:
                         print '>>> LDR key error <<<'
+
+                # MOV
                 elif insn.id == capstone.arm.ARM_INS_MOV:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1)
                     except KeyError:
                         print '>>> MOV key error <<<'
 
+                # AND
+                elif insn.id == capstone.arm.ARM_INS_AND:
+                    try:
+                        new_regs[insn.operands[0].reg] = opval(insn, 1) & opval(insn, 2)
+                    except KeyError:
+                        print '>>> AND key error <<<'
+
+                # ORR
+                elif insn.id == capstone.arm.ARM_INS_ORR:
+                    try:
+                        new_regs[insn.operands[0].reg] = opval(insn, 1) | opval(insn, 2)
+                    except KeyError:
+                        print '>>> ORR key error <<<'
+
+                # EOR
+                elif insn.id == capstone.arm.ARM_INS_EOR:
+                    try:
+                        new_regs[insn.operands[0].reg] = opval(insn, 1) ^ opval(insn, 2)
+                    except KeyError:
+                        print '>>> EOR key error <<<'
+
+                # BIC
+                elif insn.id == capstone.arm.ARM_INS_BIC:
+                    try:
+                        new_regs[insn.operands[0].reg] = (
+                            opval(insn, 1) & (~opval(insn, 2) & 0xffffffff))
+                    except KeyError:
+                        print '>>> BIC key error <<<'
+
+                # MRS
+                elif insn.id == capstone.arm.ARM_INS_MRS:
+                    # punting on this one
+                    new_regs[insn.operands[0].reg] = 0xdeadbeef
+
+                # STM
+                elif insn.id == capstone.arm.ARM_INS_STM:
+                    if insn.writeback:
+                        new_regs[insn.operands[0].reg] += (len(insn.operands) - 1) * 4
+
+                # catch all
+                else:
+                    print '>>> INSN NIMPL <<<'
+
+                # set new register state on all possible next instructions
                 if new_regs:
                     for entry in new_entries:
                         regs.setdefault(entry, {}).update(new_regs)

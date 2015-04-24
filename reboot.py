@@ -13,6 +13,7 @@ def print_detail(insn):
     print '{:08x}: {}  {:8}{}'.format(insn.address,
                                       binascii.hexlify(insn.bytes),
                                       insn.mnemonic, insn.op_str)
+    return
 
     if insn.id == capstone.arm.ARM_INS_INVALID:
         return
