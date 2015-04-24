@@ -10,7 +10,7 @@ def print_detail(insn):
     if insn is None:
         return
 
-    print '{:08x}: {}  {:8}{}'.format(insn.address,
+    print '{:08x}: {:8}  {:8}{}'.format(insn.address,
                                       binascii.hexlify(insn.bytes),
                                       insn.mnemonic, insn.op_str)
     return

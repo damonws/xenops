@@ -52,11 +52,10 @@ def rd_disasm(data, start=0, entries=None):
 
     def disasm(addr):
         new_entries = []
+        thumb = addr % 2
+        addr = addr & 0xfffffffe
         if addr not in listing:
-            if addr % 2:
-                md.mode = capstone.CS_MODE_THUMB
-            else:
-                md.mode = capstone.CS_MODE_ARM
+            md.mode = capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM
 
             insn = next(md.disasm(data[addr-start:addr-start+max_insn_size],
                                   addr, 1), None)
@@ -84,17 +83,21 @@ def rd_disasm(data, start=0, entries=None):
                     # add target of jump instructions
                     if insn.operands[0].type == capstone.arm.ARM_OP_IMM:
                         new_entries.append(insn.operands[0].imm & 0xffffffff)
+                    elif insn.operands[0].type == capstone.arm.ARM_OP_REG:
+                        try:
+                            new_entries.append(regs[addr][insn.operands[0].reg])
+                        except KeyError:
+                            print '>>> JMP TO UNK REG <<<'
                     else:
-                        # TODO: handle jumps to registers (e.g. bx r1)
-                        pass
+                        print '>>> JMP NIMPL <<<'
 
                     # add next instruction for conditional jumps
                     if insn.cc != capstone.arm.ARM_CC_AL:
-                        new_entries.append(addr + insn.size)
+                        new_entries.append(addr + insn.size + thumb)
 
                 else:
                     # add next instruction for everything else
-                    new_entries.append(addr + insn.size)
+                    new_entries.append(addr + insn.size + thumb)
 
                 # determine resulting register state
 
@@ -183,7 +186,7 @@ def rd_disasm(data, start=0, entries=None):
                 # set new register state on all possible next instructions
                 if new_regs:
                     for entry in new_entries:
-                        regs.setdefault(entry, {}).update(new_regs)
+                        regs.setdefault(entry & 0xfffffffe, {}).update(new_regs)
 
         return new_entries
 
