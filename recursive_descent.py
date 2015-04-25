@@ -68,17 +68,17 @@ def rd_disasm(data, start=0, entries=None):
             if insn:
                 if addr in regs:
                     new_regs = regs[addr]
-                    print '\n' + '\n'.join('\t' + ' '.join(g)
-                            for g in grouper(('{}={:08x}'.format(insn.reg_name(r), v)
-                            for r, v in sorted(regs[addr].items())), 4, ''))
+                    #print '\n' + '\n'.join('\t' + ' '.join(g)
+                    #        for g in grouper(('{}={:08x}'.format(insn.reg_name(r), v)
+                    #        for r, v in sorted(regs[addr].items())), 4, ''))
 
                 else:
                     new_regs = {}
 
-                print '{:08x}: {:8} {}  {:8}{}'.format(insn.address,
+                print '{:08x}: {:8} {}  {:8}{}\t'.format(insn.address,
                                                   binascii.hexlify(insn.bytes),
                                                   'T' if thumb else 'A',
-                                                  insn.mnemonic, insn.op_str)
+                                                  insn.mnemonic, insn.op_str),
                 #reboot.print_detail(insn)
 
                 # analyze semantics of instructions
@@ -102,13 +102,20 @@ def rd_disasm(data, start=0, entries=None):
                         new_entries.append(addr + insn.size + thumb)
 
                 else:
-                    # add next instruction for everything else
-                    new_entries.append(addr + insn.size + thumb)
+                    # add next instruction for everything except instructions
+                    # that explicitly change PC (we'll add these when
+                    # evaluationing the specific instruction). For now, assume
+                    # PC is changed if it's the first operand.
+                    if not (len(insn.operands) > 0 and
+                            insn.operands[0].type == capstone.arm.ARM_OP_REG and
+                            insn.operands[0].reg == capstone.arm.ARM_REG_PC):
+                        new_entries.append(addr + insn.size + thumb)
 
                 # determine resulting register state
 
                 # instructions we don't care about (for now)
-                if insn.id in (capstone.arm.ARM_INS_CMP,
+                if insn.id in (capstone.arm.ARM_INS_NOP,
+                               capstone.arm.ARM_INS_CMP,
                                capstone.arm.ARM_INS_B,
                                capstone.arm.ARM_INS_BX,
                                capstone.arm.ARM_INS_STR,
@@ -116,26 +123,49 @@ def rd_disasm(data, start=0, entries=None):
                                capstone.arm.ARM_INS_ISB,
                                capstone.arm.ARM_INS_MSR,
                               ):
-                    pass
+                    print
+
+                # BL
+                elif insn.id == capstone.arm.ARM_INS_BL:
+                    new_regs[capstone.arm.ARM_REG_LR] = addr + insn.size
+                    print
 
                 # ADD
                 elif insn.id == capstone.arm.ARM_INS_ADD:
                     try:
-                        new_regs[insn.operands[0].reg] = opval(insn, 1) + opval(insn, 2)
+                        if len(insn.operands) in (2, 3):
+                            if len(insn.operands) == 3:
+                                new_regs[insn.operands[0].reg] = opval(insn, 1) + opval(insn, 2)
+                            else:
+                                new_regs[insn.operands[0].reg] += opval(insn, 1)
+                            print '; {:x}'.format(new_regs[insn.operands[0].reg])
+                        else:
+                            print '>>> ADD bad op len <<<'
                     except KeyError:
                         print '>>> ADD key error <<<'
 
                 # SUB
                 elif insn.id == capstone.arm.ARM_INS_SUB:
                     try:
-                        new_regs[insn.operands[0].reg] = opval(insn, 1) - opval(insn, 2)
+                        if len(insn.operands) in (2, 3):
+                            if len(insn.operands) == 3:
+                                new_regs[insn.operands[0].reg] = opval(insn, 1) - opval(insn, 2)
+                            else:
+                                new_regs[insn.operands[0].reg] -= opval(insn, 1)
+                            print '; {:x}'.format(new_regs[insn.operands[0].reg])
+                        else:
+                            print '>>> SUB bad op len <<<'
                     except KeyError:
                         print '>>> SUB key error <<<'
 
                 # LDR
                 elif insn.id == capstone.arm.ARM_INS_LDR:
                     try:
-                        new_regs[insn.operands[0].reg] = opval(insn, 1)
+                        if insn.operands[0].reg == capstone.arm.ARM_REG_PC:
+                            new_entries.append(opval(insn, 1))
+                        else:
+                            new_regs[insn.operands[0].reg] = opval(insn, 1)
+                        print '; {:x}'.format(new_regs[insn.operands[0].reg])
                     except KeyError:
                         print '>>> LDR key error <<<'
 
@@ -143,6 +173,7 @@ def rd_disasm(data, start=0, entries=None):
                 elif insn.id == capstone.arm.ARM_INS_MOV:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1)
+                        print '; {:x}'.format(new_regs[insn.operands[0].reg])
                     except KeyError:
                         print '>>> MOV key error <<<'
 
@@ -150,6 +181,7 @@ def rd_disasm(data, start=0, entries=None):
                 elif insn.id == capstone.arm.ARM_INS_AND:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1) & opval(insn, 2)
+                        print '; {:x}'.format(new_regs[insn.operands[0].reg])
                     except KeyError:
                         print '>>> AND key error <<<'
 
@@ -157,6 +189,7 @@ def rd_disasm(data, start=0, entries=None):
                 elif insn.id == capstone.arm.ARM_INS_ORR:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1) | opval(insn, 2)
+                        print '; {:x}'.format(new_regs[insn.operands[0].reg])
                     except KeyError:
                         print '>>> ORR key error <<<'
 
@@ -164,6 +197,7 @@ def rd_disasm(data, start=0, entries=None):
                 elif insn.id == capstone.arm.ARM_INS_EOR:
                     try:
                         new_regs[insn.operands[0].reg] = opval(insn, 1) ^ opval(insn, 2)
+                        print '; {:x}'.format(new_regs[insn.operands[0].reg])
                     except KeyError:
                         print '>>> EOR key error <<<'
 
@@ -172,6 +206,7 @@ def rd_disasm(data, start=0, entries=None):
                     try:
                         new_regs[insn.operands[0].reg] = (
                             opval(insn, 1) & (~opval(insn, 2) & 0xffffffff))
+                        print '; {:x}'.format(new_regs[insn.operands[0].reg])
                     except KeyError:
                         print '>>> BIC key error <<<'
 
@@ -179,11 +214,18 @@ def rd_disasm(data, start=0, entries=None):
                 elif insn.id == capstone.arm.ARM_INS_MRS:
                     # punting on this one
                     new_regs[insn.operands[0].reg] = 0xdeadbeef
+                    print
 
                 # STM
                 elif insn.id == capstone.arm.ARM_INS_STM:
                     if insn.writeback:
                         new_regs[insn.operands[0].reg] += (len(insn.operands) - 1) * 4
+                    print
+
+                # PUSH
+                elif insn.id == capstone.arm.ARM_INS_PUSH:
+                    new_regs[capstone.arm.ARM_REG_SP] -= len(insn.operands) * 4
+                    print
 
                 # catch all
                 else:
@@ -204,4 +246,13 @@ if __name__ == '__main__':
     import sys
     for filename in sys.argv[1:]:
         with open(filename) as f:
-            rd_disasm(f.read(), 0x9ff00000)
+            rd_disasm(f.read(), 0x9ff00000, [
+                0x9ff00000,
+                #0x9ff00004,
+                #0x9ff00008,
+                #0x9ff0000c,
+                #0x9ff00010,
+                #0x9ff00014,
+                #0x9ff00018,
+                #0x9ff0001c
+            ])
